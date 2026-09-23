@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""裸K战法 · 五模块规则引擎
+"""裸K战法 · 六模块规则引擎
 
 严格移植 ~/.hermes/tmp/naked_kline_v3.py，并在移植中修掉 3 个已知缺陷：
 
@@ -30,9 +30,9 @@
 
 from __future__ import annotations
 
-import statistics
+from datetime import date, datetime
 
-ENGINE_VERSION = "2.0.0"
+ENGINE_VERSION = "2.0.2"
 ICE_MAX_DEV = 12.0  # 冰线偏离闸门(%)，超过则降级到下一优先级
 
 # --------------------------------------------------------------------------- #
@@ -67,6 +67,21 @@ def _entity_pct(bar: dict) -> float:
     return abs(bar["close"] - bar["open"]) / span * 100 if span > 0 else 0.0
 
 
+def _date_key(d) -> date | None:
+    """把日期解析成 datetime.date 用于可靠比较；失败返回 None 以便回退字符串比较。"""
+    if isinstance(d, datetime):
+        return d.date()
+    if isinstance(d, date):
+        return d
+    s = str(d)
+    for fmt in ("%Y-%m-%d", "%Y%m%d", "%Y/%m/%d"):
+        try:
+            return datetime.strptime(s, fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
 # --------------------------------------------------------------------------- #
 # 模块一：K线解剖
 # --------------------------------------------------------------------------- #
@@ -95,7 +110,7 @@ def _module1(bars: list[dict]) -> dict:
         um = "上方供应强劲"
     elif up > 30 and C > O:
         um = "多头遇阻"
-    elif upper < 0.01:
+    elif span > 0 and upper / span < 0.01:
         um = "光头无压力"
     else:
         um = "正常"
@@ -104,7 +119,7 @@ def _module1(bars: list[dict]) -> dict:
         lm = "下方承接强劲"
     elif lp > 30 and C < O:
         lm = "空头有抵抗"
-    elif lower < 0.01:
+    elif span > 0 and lower / span < 0.01:
         lm = "光脚无承接"
     else:
         lm = "正常"
@@ -182,22 +197,35 @@ def _module2(bars: list[dict]) -> dict:
         stage = "中位"
 
     r20 = bars[-21:-1]
-    near5 = [b["close"] for b in r20[-5:]]
-    far5 = [b["close"] for b in r20[-10:-5]]
-    mn, mf = statistics.fmean(near5), statistics.fmean(far5)
-    ratio = mn / mf if mf else 1.0
-    if ratio > 1.02:
+    near5 = r20[-5:]
+    far5 = r20[-10:-5]
+    # P1-10: 趋势用结构判断（近5/前5高低点），不再用收盘均值（本质是均线）
+    near_high = max(b["high"] for b in near5)
+    near_low = min(b["low"] for b in near5)
+    far_high = max(b["high"] for b in far5)
+    far_low = min(b["low"] for b in far5)
+    if near_high > far_high and near_low > far_low:
         trend = "上升趋势"
-    elif ratio < 0.98:
+    elif near_high < far_high and near_low < far_low:
         trend = "下跌趋势"
     else:
         trend = "横盘震荡"
+    # 保留 trend_ratio 语义：近5/前5区间中点之比（结构化的“位置比”，非均线）
+    near_mid = (near_high + near_low) / 2
+    far_mid = (far_high + far_low) / 2
+    ratio = near_mid / far_mid if far_mid else 1.0
 
     p20h = max(b["high"] for b in r20)
     p20l = min(b["low"] for b in r20)
     t, prev = bars[-1], bars[-2]
     chg = _pct(t["close"], prev["close"])
-    is_engulf = t["close"] < t["open"] and prev["close"] > prev["open"] and t["close"] < prev["open"]
+    # P0-1: 标准阴包阳——前阳后阴，且当前实体吞没前阳线实体
+    is_engulf = (
+        prev["close"] > prev["open"]
+        and t["close"] < t["open"]
+        and t["open"] >= prev["close"]
+        and t["close"] <= prev["open"]
+    )
 
     if t["close"] > p20h:
         kq = "向上突破"
@@ -215,12 +243,12 @@ def _module2(bars: list[dict]) -> dict:
     else:
         kq = "普通日"
 
-    if trend == "上升趋势" and t["close"] < t["open"]:
-        bg = "上涨趋势中回调，对阴线容忍度提高 50%"
-        bg_kind = "tolerant"
-    elif stage in ("高位", "极高位") and (is_engulf or t["close"] < t["open"]):
+    if stage in ("高位", "极高位") and (is_engulf or t["close"] < t["open"]):
         bg = "高位%s阴线，警惕性提高 100%%" % ("(阴包阳)" if is_engulf else "")
         bg_kind = "alert"
+    elif trend == "上升趋势" and t["close"] < t["open"]:
+        bg = "上涨趋势中回调，对阴线容忍度提高 50%"
+        bg_kind = "tolerant"
     else:
         bg = "无特殊修正"
         bg_kind = "neutral"
@@ -321,6 +349,9 @@ def _ice_line(bars: list[dict]) -> dict:
                             "days_ago": last - max(run),
                             "rejected": rejected,
                         }
+                    rejected.append({"priority": 3, "date": bars[min(run)]["date"],
+                                     "price": round(lo, 2),
+                                     "reason": "偏离 %.1f%% 超闸门" % (abs(C - lo) / lo * 100)})
                     break
 
     # ---- 优先级 4: 跳空缺口起点
@@ -338,16 +369,21 @@ def _ice_line(bars: list[dict]) -> dict:
                     "days_ago": last - (i - 1),
                     "rejected": rejected,
                 }
+            rejected.append({"priority": 4, "date": bars[i - 1]["date"],
+                             "price": round(price, 2),
+                             "reason": "偏离 %.1f%% 超闸门" % (abs(C - price) / price * 100)})
             break
 
     # ---- 全失效：退化到近 20 日最低收盘
-    price = min(b["close"] for b in bars[-21:-1])
+    window = bars[-21:-1]
+    fallback_bar = min(window, key=lambda b: b["close"])
+    price = fallback_bar["close"]
     return {
         "price": round(price, 2),
         "priority": 0,
         "source": "近20日最低收盘价（降级兜底）",
         "detail": "四级优先级全部失效，使用降级兜底值",
-        "date": bars[-21:-1][0]["date"],
+        "date": fallback_bar["date"],
         "days_ago": None,
         "rejected": rejected,
     }
@@ -364,7 +400,9 @@ def _zones(bars: list[dict], n: int = 12) -> tuple[dict, dict]:
         s_top, s_bot = max(lh), min(lh)
         sr = (s_top - s_bot) / s_bot * 100
         strength = "强" if sr < 2.0 else "中"
-        touches = sum(1 for b in w if s_bot <= b["high"] <= s_top and b["close"] < b["high"])
+        # P1-13: 供应区触碰需“冲高回落/收阴”才算有效，避免 close<high 恒真导致强度虚高。
+        # 强度“+”只在出现 ≥2 根明显冲高收阴时生效，窄幅横盘不会误加“+”。
+        touches = sum(1 for b in w if s_bot <= b["high"] <= s_top and b["close"] < b["open"])
         if touches >= 2:
             strength += "+"
     else:
@@ -377,7 +415,8 @@ def _zones(bars: list[dict], n: int = 12) -> tuple[dict, dict]:
         d_bot, d_top = min(ll), max(ll)
         dr = (d_top - d_bot) / d_bot * 100
         dstrength = "强" if dr < 2.0 else "中"
-        touches = sum(1 for b in w if d_bot <= b["low"] <= d_top and b["close"] > b["low"])
+        # P1-13: 需求区触碰需“下探回收/收阳”才算有效，强度“+”只在明显下探回收时生效
+        touches = sum(1 for b in w if d_bot <= b["low"] <= d_top and b["close"] > b["open"])
         if touches >= 2:
             dstrength += "+"
     else:
@@ -422,7 +461,7 @@ def _module3(bars: list[dict]) -> dict:
     # FIX-3: 大阴线场景显式标注（v3 是隐式改写，本版只标注不改写）
     if ice["priority"] == 1:
         for b in bars[-11:-1]:
-            if b["open"] == ice["price"] and b["close"] < b["open"] and ice["price"] > C:
+            if abs(b["open"] - ice["price"]) < 0.005 and b["close"] < b["open"] and ice["price"] > C:
                 ice["note"] = (ice["note"] + "；" if ice["note"] else "") + \
                     "冰线来自大阴线开盘，处于现价上方，性质为阻力"
                 ice["role"] = "resistance"
@@ -431,10 +470,18 @@ def _module3(bars: list[dict]) -> dict:
     near_supply = supply["bottom"] * 0.98 <= C <= supply["top"] * 1.02
     near_demand = demand["bottom"] * 0.98 <= C <= demand["top"] * 1.02
 
+    # P1-14: distance_pct 语义统一——正数=价位在现价上方，负数=下方；side 字段显式标注
+    supply_distance = round(_pct(supply["bottom"], C), 2)
+    demand_distance = round(_pct(demand["top"], C), 2)
+
     return {
         "ice": ice,
-        "supply": {**supply, "distance_pct": round(_pct(supply["bottom"], C), 2), "in_zone": near_supply},
-        "demand": {**demand, "distance_pct": round(_pct(demand["top"], C), 2), "in_zone": near_demand},
+        "supply": {**supply, "distance_pct": supply_distance,
+                   "side": "above" if supply_distance >= 0 else "below",
+                   "in_zone": near_supply},
+        "demand": {**demand, "distance_pct": demand_distance,
+                   "side": "above" if demand_distance >= 0 else "below",
+                   "in_zone": near_demand},
         "in_zone": near_supply or near_demand,
     }
 
@@ -444,11 +491,23 @@ def _module3(bars: list[dict]) -> dict:
 # --------------------------------------------------------------------------- #
 
 _BUILD_LABEL = {
-    ("上升趋势", True): ("看涨反转", "多头陷阱"),
-    ("上升趋势", False): ("震仓洗盘", "趋势转弱"),
-    ("下跌趋势", True): ("超跌反弹", "下跌中继"),
-    ("下跌趋势", False): ("下跌延续", "真出货"),
+    ("上升趋势", "up"): ("看涨反转", "多头陷阱"),
+    ("上升趋势", "down"): ("震仓洗盘", "趋势转弱"),
+    ("上升趋势", "doji"): ("趋势暂歇", "多头陷阱"),
+    ("下跌趋势", "up"): ("超跌反弹", "下跌中继"),
+    ("下跌趋势", "down"): ("下跌延续", "真出货"),
+    ("下跌趋势", "doji"): ("跌势暂歇", "下跌中继"),
+    ("横盘震荡", "up"): ("多头试探", "假突破"),
+    ("横盘震荡", "down"): ("空头试探", "真破位"),
+    ("横盘震荡", "doji"): ("方向待定", "假突破"),
 }
+
+# 剧本 A 标签的三态归属：中性标签既不进 bullish，也不进 bearish
+_BULLISH_QA = {"看涨反转", "震仓洗盘", "超跌反弹", "多头试探"}
+_BEARISH_QA = {"下跌延续", "真出货", "空头试探", "趋势转弱"}
+
+# chart_levels 里止损线的标签（按方向）
+_STOP_LABEL = {"bull": "多头止损", "bear": "空头止损", "neutral": "参考止损"}
 
 
 def _module4(bars: list[dict], m1: dict, m2: dict, m3: dict) -> dict:
@@ -456,10 +515,15 @@ def _module4(bars: list[dict], m1: dict, m2: dict, m3: dict) -> dict:
     O, H, L, C = t["open"], t["high"], t["low"], t["close"]
     trend = m2["trend"]
 
-    ta = (O + C) / 2
-    tbl = L + (H - L) * 0.30
-    tbh = ta
+    ta0 = (O + C) / 2
+    tbl0 = L + (H - L) * 0.30
     tc = L * 0.997
+
+    # B 区间：以实体中点和低点 30% 位为边界，始终有序
+    tbl = min(ta0, tbl0)
+    tbh = max(ta0, tbl0)
+    # A 触发价必须严格高于 B 上沿，避免 O==C==L 等极端 bar 下 A 触发塌缩进 B 区间
+    ta = tbh + 0.01
 
     if trend == "上升趋势":
         ba, bb, bc = 50, 30, 20
@@ -468,14 +532,20 @@ def _module4(bars: list[dict], m1: dict, m2: dict, m3: dict) -> dict:
     else:
         ba, bb, bc = 30, 40, 30
 
+    # P0-7: 供应/需求区方向性概率调整（总和归一化到 100）
     polarized = False
-    if m3["in_zone"]:
-        ba, bb, bc = 40, 20, 40
+    if m3["supply"]["in_zone"]:
+        ba, bb, bc = 35, 20, 45
+        polarized = True
+    elif m3["demand"]["in_zone"]:
+        ba, bb, bc = 45, 20, 35
         polarized = True
 
     up = C > O
+    down = C < O
+    state = "up" if up else ("down" if down else "doji")
     corrections = []
-    if not up:
+    if down:
         decl = (C - O) / O * 100
         if abs(decl) > 5 and m1["entity_pct"] > 60:
             ba -= 10
@@ -484,38 +554,60 @@ def _module4(bars: list[dict], m1: dict, m2: dict, m3: dict) -> dict:
         elif abs(decl) < 2 and m1["shadow"]["lower_pct"] > m1["entity_pct"]:
             ba += 10
             bc -= 10
-            corrections.append("阴线跌幅 <2%% 且下影>实体：A+10%%，C-10%%")
+            corrections.append("阴线跌幅 <2% 且下影>实体：A+10%，C-10%")
         else:
             corrections.append("阴线幅度适中，无需修正")
-    else:
+    elif up:
         corrections.append("今日收阳，不适用阴线修正")
+    else:
+        corrections.append("十字星收盘，不适用阴线修正")
 
     total = ba + bb + bc
     pa = round(ba / total * 100)
     pb = round(bb / total * 100)
     pc = 100 - pa - pb
 
-    key = (trend, up)
+    key = (trend, state)
     if key in _BUILD_LABEL:
         qa, qc = _BUILD_LABEL[key]
+    elif up:
+        qa, qc = ("多头试探", "假突破")
+    elif down:
+        qa, qc = ("空头试探", "真破位")
     else:
-        qa, qc = ("多头试探", "假突破") if up else ("空头试探", "真破位")
-    qb = "中继/整固" if not up else "高位整固"
-    if trend == "下跌趋势" and up:
-        qb = "反弹中继"
-    elif trend == "横盘震荡" and not up:
-        qb = "箱体内回踩"
+        qa, qc = ("方向待定", "假突破")
 
-    # 止损反推（技能：看涨 -> 冰线×1.01；看跌 -> 供应区下沿×0.99）
-    bullish = qa in ("看涨反转", "震仓洗盘", "超跌反弹", "多头试探")
-    if bullish:
-        stop = m3["ice"]["price"] * 1.01
-        stop_note = "看涨 → 止损上移至冰线（%.2f）上方 1%% = %.2f" % (m3["ice"]["price"], stop)
-        resistance = None
+    if state == "doji":
+        qb = "整固观察"
+    elif up:
+        qb = "高位整固"
+        if trend == "下跌趋势":
+            qb = "反弹中继"
     else:
-        stop = m3["supply"]["bottom"] * 0.99
-        stop_note = "看跌 → 压力下移至供应区下沿（%.2f）下方 1%% = %.2f" % (m3["supply"]["bottom"], stop)
-        resistance = m3["supply"]["bottom"]
+        qb = "中继/整固"
+        if trend == "横盘震荡":
+            qb = "箱体内回踩"
+
+    # 方向三态：中性标签既不进 bullish，也不进 bearish
+    if qa in _BULLISH_QA:
+        direction = "bull"
+    elif qa in _BEARISH_QA:
+        direction = "bear"
+    else:
+        direction = "neutral"
+
+    # P0-3: 止损方向——做多止损在冰线下方，做空止损在供应区上方，中性仅作参考。
+    # resistance 始终表示“上方压力位”，与止损位（stop_loss）分离。
+    resistance = m3["supply"]["top"]
+    if direction == "bull":
+        stop = m3["ice"]["price"] * 0.99
+        stop_note = "看涨 → 止损设在冰线（%.2f）下方 1%% = %.2f" % (m3["ice"]["price"], stop)
+    elif direction == "bear":
+        stop = m3["supply"]["top"] * 1.01
+        stop_note = "看跌 → 止损设在供应区上沿（%.2f）上方 1%% = %.2f" % (m3["supply"]["top"], stop)
+    else:
+        stop = m3["supply"]["top"] * 1.01
+        stop_note = "方向未定 → 止损仅作参考（供应区上沿 %.2f 上方 1%% = %.2f）" % (m3["supply"]["top"], stop)
 
     probs = {"A": pa, "B": pb, "C": pc}
     top = max(probs.values())
@@ -524,6 +616,7 @@ def _module4(bars: list[dict], m1: dict, m2: dict, m3: dict) -> dict:
     return {
         "trend_used": trend,
         "polarized": polarized,
+        "direction": direction,
         "tie": len(tied) > 1,
         "tied": tied,
         "corrections": corrections,
@@ -546,13 +639,14 @@ def _module4(bars: list[dict], m1: dict, m2: dict, m3: dict) -> dict:
 # --------------------------------------------------------------------------- #
 
 def _module5(bars: list[dict], m1: dict, m4: dict, quote: dict | None) -> dict:
-    if not quote or "chg_pct" not in quote:
+    if not quote:
         return {"available": False, "note": "非交易时段，跳过盘中动态修正"}
 
-    last = quote["last"]
+    last = quote.get("last")
+    if last is None:
+        return {"available": False, "note": "快照缺少现价，跳过盘中动态修正"}
+
     sc = m4["scenarios"]
-    if quote.get("chg_pct") is not None:
-        pass
     if last >= sc["A"]["trigger"]:
         live, tone = "A", "bull"
         note = "现价 %.2f 已站上剧本A触发价 %.2f，看涨剧本进行中" % (last, sc["A"]["trigger"])
@@ -567,10 +661,15 @@ def _module5(bars: list[dict], m1: dict, m4: dict, quote: dict | None) -> dict:
         "available": True,
         "live_scenario": live,
         "tone": tone,
-        "note": note,
+        "note": note + "（盘中未收盘，触发未确认）",
+        "confirmed": False,
         "intraday": {
-            "open": quote["open"], "high": quote["high"], "low": quote["low"],
-            "last": last, "chg_pct": quote["chg_pct"], "time": quote.get("time", ""),
+            "open": quote.get("open"),
+            "high": quote.get("high"),
+            "low": quote.get("low"),
+            "last": last,
+            "chg_pct": quote.get("chg_pct"),
+            "time": quote.get("time", ""),
         },
     }
 
@@ -585,12 +684,29 @@ def verify_previous(prev: dict | None, bars: list[dict], today: str) -> dict | N
     剧本语义（技能模块四）:
         A 触发: 收盘 > (O+C)/2  -> 看涨剧本成立
         C 触发: 收盘 < L*0.997   -> 看跌剧本成立
-        其余    : 落入 B 区间     -> 区间剧本成立
+        B     : 收盘落入 B.low~B.high 区间 -> 区间剧本成立
+        三者皆未触发 -> 记为“未触发”，不再把“长期横盘”简单算作 B
     """
     if not prev or prev.get("date") == today:
         return None
 
-    after = [b for b in bars if b["date"] > prev["date"]]
+    # P0-3(2.0.2): 日期严格解析——任一无法解析的日期直接跳过该 bar，不做字符串回退，
+    # 避免 date/str 类型混用比较抛 TypeError。无法解析的 bar 计数后合并为一条 warning。
+    parse_warnings: list[str] = []
+    prev_key = _date_key(prev["date"])
+    if prev_key is None:
+        parse_warnings.append("上轮日期 %r 无法解析" % prev["date"])
+    after = []
+    bad_bar_count = 0
+    for b in bars:
+        bkey = _date_key(b["date"])
+        if bkey is None:
+            bad_bar_count += 1
+            continue
+        if prev_key is not None and bkey > prev_key:
+            after.append(b)
+    if bad_bar_count:
+        parse_warnings.append("K线中有 %d 根日期无法解析，已跳过" % bad_bar_count)
     if not after:
         return None
 
@@ -598,7 +714,9 @@ def verify_previous(prev: dict | None, bars: list[dict], today: str) -> dict | N
     if not sc:
         return None
 
+    # P0-8: B 判定贴近剧本语义——A/C 触发优先；B 需收盘实际落入区间；否则“未触发”
     hits = {"A": None, "B": None, "C": None}
+    b_low, b_high = sc["B"]["low"], sc["B"]["high"]
     for b in after:
         if b["close"] > sc["A"]["trigger"]:
             hits["A"] = b["date"]
@@ -606,30 +724,50 @@ def verify_previous(prev: dict | None, bars: list[dict], today: str) -> dict | N
         if b["close"] < sc["C"]["trigger"]:
             hits["C"] = b["date"]
             break
-    if hits["A"] is None and hits["C"] is None:
-        hits["B"] = after[0]["date"]
+        if hits["B"] is None and b_low <= b["close"] <= b_high:
+            hits["B"] = b["date"]
 
-    actual = "A" if hits["A"] else ("C" if hits["C"] else "B")
+    if hits["A"]:
+        actual = "A"
+    elif hits["C"]:
+        actual = "C"
+    elif hits["B"]:
+        actual = "B"
+    else:
+        actual = "未触发"
+
     predicted = prev.get("playbook", {}).get("dominant")
-    verdict = "命中" if actual == predicted else "未命中"
+    if actual == "未触发":
+        verdict = "未触发"
+    else:
+        verdict = "命中" if actual == predicted else "未命中"
 
-    # 冰线/区间漂移
+    # 冰线/区间漂移：按角色区分突破方向
     drift = {}
     ice_node = prev.get("levels", {}).get("ice", {})
     old_ice = ice_node.get("price")
     if old_ice:
         role = ice_node.get("role")
-        broke = any(b["close"] < old_ice for b in after)
         drift["ice_old"] = old_ice
         drift["ice_role"] = role
-        drift["ice_broken"] = broke
-        drift["ice_break_date"] = next((b["date"] for b in after if b["close"] < old_ice), None)
-        if not broke:
-            drift["ice_label"] = "守稳" if role == "support" else "未回落至其下方"
-        elif role == "resistance":
-            drift["ice_label"] = "收盘回落至冰线下方"
+        if role == "resistance":
+            # 阻力在上方：收盘站上冰线才算突破
+            broke = any(b["close"] > old_ice for b in after)
+            drift["ice_broken"] = broke
+            drift["ice_break_date"] = next((b["date"] for b in after if b["close"] > old_ice), None)
+            drift["ice_label"] = "站上冰线（阻力突破）" if broke else "未突破（阻力仍有效）"
+        elif role == "far_support":
+            # 远支撑：区分是否回落跌破
+            broke = any(b["close"] < old_ice for b in after)
+            drift["ice_broken"] = broke
+            drift["ice_break_date"] = next((b["date"] for b in after if b["close"] < old_ice), None)
+            drift["ice_label"] = "回落跌破冰线" if broke else "未回落至其下方"
         else:
-            drift["ice_label"] = "跌破冰线（支撑失效）"
+            # support 及其他默认：跌破冰线才算支撑失效
+            broke = any(b["close"] < old_ice for b in after)
+            drift["ice_broken"] = broke
+            drift["ice_break_date"] = next((b["date"] for b in after if b["close"] < old_ice), None)
+            drift["ice_label"] = "跌破冰线（支撑失效）" if broke else "守稳"
 
     old_sup = prev.get("levels", {}).get("supply", {})
     if old_sup.get("top"):
@@ -646,6 +784,7 @@ def verify_previous(prev: dict | None, bars: list[dict], today: str) -> dict | N
         "first_hit_dates": hits,
         "verdict": verdict,
         "drift": drift,
+        "warnings": parse_warnings,
         "bar_after": after[0] if after else None,
     }
 
@@ -658,7 +797,7 @@ def analyze(bars: list[dict], name: str, code: str, symbol: str,
             quote: dict | None = None, prev: dict | None = None,
             is_intraday: bool = False) -> dict:
     if len(bars) < 21:
-        raise ValueError("K线不足 21 根，无法执行五模块分析（当前 %d 根）" % len(bars))
+        raise ValueError("K线不足 21 根，无法执行六模块分析（当前 %d 根）" % len(bars))
 
     m1 = _module1(bars)
     m2 = _module2(bars)
@@ -685,8 +824,12 @@ def analyze(bars: list[dict], name: str, code: str, symbol: str,
         {"key": "playC", "label": "剧本C触发", "price": m4["scenarios"]["C"]["trigger"],
          "kind": "line", "color": "#FB923C", "style": "dotted",
          "note": m4["scenarios"]["C"]["label"]},
-        {"key": "stop", "label": "止损/压力", "price": m4["stop_loss"], "kind": "line",
+        {"key": "stop", "label": _STOP_LABEL.get(m4.get("direction"), "止损"),
+         "price": m4["stop_loss"], "kind": "line",
          "color": "#A78BFA", "style": "large_dashed", "note": m4["stop_note"]},
+        {"key": "resistance", "label": "压力位", "price": m4["resistance"], "kind": "line",
+         "color": "#F87171", "style": "dashed",
+         "note": "上方压力位（供应区上沿，与止损位分离）"},
     ]
 
     warnings = []

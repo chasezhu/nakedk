@@ -1,0 +1,12 @@
+# 运行时产物
+.run/
+__pycache__/
+*.pyc
+
+# 自选股真实数据不进仓库（数据根在 ~/.nakedk/，模板见 watchlist.example）
+watchlist.txt
+watchlist.local.txt
+
+# 历史落盘（默认在 ~/.nakedk/history/，此处防误放）
+history/
+*.json.tmp

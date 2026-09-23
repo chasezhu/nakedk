@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="zh-CN" class="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>裸K战法终端 · NAKED K</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600;700&family=Fira+Sans:wght@300;400;500;600;700&family=Noto+Sans+SC:wght@400;500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/styles.css">
+<script src="/static/vendor/tailwind.js"></script>
+<script>
+// ---- Design tokens: ui-ux-pro-max --design-system (Dark Mode OLED, 终端暗色 + 高对比) ----
+// 唯一偏离项：CTA 由 #22C55E 改为 #38BDF8。理由：A股语义红涨绿跌，绿色必须专属"跌"，
+// 否则 CTA 绿与跌幅绿冲突（见 design-system/MASTER.md 记录）。
+tailwind.config = {
+  theme: {
+    extend: {
+      colors: {
+        bg: '#020617', surface: '#0F172A', surface2: '#1E293B',
+        line: '#334155', lineSoft: '#1E293B',
+        ink: '#F8FAFC', muted: '#94A3B8', dim: '#64748B',
+        accent: '#38BDF8', accentDim: '#0EA5E9',
+        up: '#F6465D', down: '#0ECB81', flat: '#94A3B8',
+        ice: '#38BDF8', supply: '#F6465D', demand: '#0ECB81',
+        playA: '#FBBF24', playC: '#FB923C', stop: '#A78BFA',
+      },
+      fontFamily: {
+        sans: ['"Fira Sans"', '"Noto Sans SC"', 'system-ui', '"PingFang SC"', '"Microsoft YaHei"', 'sans-serif'],
+        mono: ['"Fira Code"', 'ui-monospace', 'SFMono-Regular', 'Menlo', 'monospace'],
+      },
+      maxWidth: { shell: '1680px' },
+    },
+  },
+};
+</script>
+</head>
+<body class="bg-bg text-ink font-sans antialiased min-h-screen selection:bg-accent/30">
+
+<!-- ══════════ SVG icon sprite (Lucide) — 全站零 emoji 图标 ══════════ -->
+<svg width="0" height="0" class="absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-candle" viewBox="0 0 24 24"><path d="M7 3v4M7 17v4M17 6v3M17 19v3"/><rect x="4.5" y="7" width="5" height="10" rx="1"/><rect x="14.5" y="9" width="5" height="10" rx="1"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></symbol>
+    <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="14" height="14" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4M12 17h.01"/></symbol>
+    <symbol id="i-zap" viewBox="0 0 24 24"><path d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z"/></symbol>
+    <symbol id="i-crosshair" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M22 12h-4M6 12H2M12 6V2M12 22v-4"/></symbol>
+    <symbol id="i-layers" viewBox="0 0 24 24"><path d="M12 2 2 7l10 5 10-5-10-5Z"/><path d="m2 17 10 5 10-5M2 12l10 5 10-5"/></symbol>
+    <symbol id="i-play" viewBox="0 0 24 24"><path d="M6 3h12M6 21h12M6 3v18M18 3v18M9 12h6"/><path d="M9 9h6v6H9z"/></symbol>
+    <symbol id="i-history" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 2.64-6.36L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l3.5 2"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></symbol>
+    <symbol id="i-wifi" viewBox="0 0 24 24"><path d="M12 20h.01M5 12.86a10 10 0 0 1 14 0M8.5 16.43a5 5 0 0 1 7 0M2 8.82a15 15 0 0 1 20 0"/></symbol>
+    <symbol id="i-database" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/><path d="M3 12c0 1.66 4 3 9 3s9-1.34 9-3"/></symbol>
+    <symbol id="i-loader" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-6.22-8.56"/></symbol>
+  </defs>
+</svg>
+
+<div class="ambient" aria-hidden="true"></div>
+
+<!-- ══════════ Floating navbar ══════════ -->
+<header class="fixed top-4 left-4 right-4 z-40">
+  <div class="max-w-shell mx-auto rounded-2xl border border-lineSoft bg-surface/85 backdrop-blur-xl shadow-2xl shadow-black/50">
+    <div class="flex flex-wrap items-center gap-x-4 gap-y-3 px-4 py-3">
+
+      <a href="/" class="flex items-center gap-2.5 shrink-0 cursor-pointer group">
+        <span class="grid h-9 w-9 place-items-center rounded-xl bg-accent/12 border border-accent/30 text-accent group-hover:bg-accent/20 transition-colors duration-200">
+          <svg class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><use href="#i-candle"/></svg>
+        </span>
+        <span class="leading-none">
+          <span class="block font-mono text-[15px] font-600 tracking-[0.18em] text-ink">NAKED<span class="text-accent">K</span></span>
+          <span class="block text-[10px] tracking-[0.22em] text-dim mt-1">裸K战法终端</span>
+        </span>
+      </a>
+
+      <!-- 搜索 -->
+      <div class="relative order-3 w-full md:order-none md:w-auto md:flex-1 md:max-w-md">
+        <div class="flex items-center gap-2 rounded-xl border border-line bg-surface2/70 px-3 py-2 focus-within:border-accent/60 focus-within:ring-2 focus-within:ring-accent/20 transition-colors duration-200">
+          <svg class="h-4 w-4 shrink-0 text-dim" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><use href="#i-search"/></svg>
+          <input id="q" type="text" autocomplete="off" spellcheck="false"
+                 placeholder="代码或名称，如 300768 / 迪普科技"
+                 class="w-full bg-transparent text-sm text-ink placeholder:text-dim outline-none font-mono">
+          <kbd class="hidden lg:inline-block rounded border border-line px-1.5 py-0.5 font-mono text-[10px] text-dim">/</kbd>
+        </div>
+        <div id="ac" class="ac-list hidden"></div>
+      </div>
+
+      <div class="flex items-center gap-2 ml-auto shrink-0">
+        <span id="trade-chip" class="hidden md:inline-flex items-center gap-1.5 rounded-lg border border-lineSoft bg-surface2/60 px-2.5 py-1.5 text-[11px] text-muted">
+          <span id="trade-dot" class="h-1.5 w-1.5 rounded-full bg-dim"></span><span id="trade-txt">—</span>
+        </span>
+        <button id="btn-refresh" class="icon-btn" title="重新拉取数据 (R)">
+          <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><use href="#i-refresh"/></svg>
+        </button>
+        <button id="btn-copy" class="icon-btn" title="复制文本报告">
+          <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><use href="#i-copy"/></svg>
+        </button>
+      </div>
+    </div>
+  </div>
+</header>
+
+<!-- ══════════ Shell ══════════ -->
+<main class="relative mx-auto max-w-shell px-4 pt-28 pb-16">
+
+  <div id="err-banner" class="hidden mb-4 flex items-start gap-3 rounded-xl border border-playC/40 bg-playC/10 px-4 py-3 text-sm text-playC">
+    <svg class="mt-0.5 h-4 w-4 shrink-0" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><use href="#i-alert"/></svg>
+    <span id="err-msg"></span>
+  </div>
+
+  <div class="grid gap-4 lg:grid-cols-[276px_minmax(0,1fr)]">
+
+    <!-- ── 侧栏：自选股 ── -->
+    <aside class="lg:sticky lg:top-28 lg:self-start">
+      <section class="rounded-2xl border border-lineSoft bg-surface/70 backdrop-blur-sm overflow-hidden">
+        <div class="flex items-center justify-between border-b border-lineSoft px-4 py-3">
+          <h2 class="flex items-center gap-2 text-[11px] font-600 tracking-[0.16em] text-muted">
+            <svg class="h-3.5 w-3.5 text-accent" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><use href="#i-layers"/></svg>
+            WATCHLIST
+          </h2>
+          <button id="btn-add" class="icon-btn h-7 w-7" title="添加自选股">
+            <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><use href="#i-plus"/></svg>
+          </button>
+        </div>
+        <ul id="watchlist" class="max-h-[calc(100vh-14rem)] overflow-y-auto thin-scroll">
+          <li class="px-4 py-6 text-center text-xs text-dim">加载中…</li>
+        </ul>
+        <div class="border-t border-lineSoft px-4 py-2.5 text-[10px] text-dim font-mono">
+          <span id="wl-count">0</span> 只 · 与 cron 任务共用同一份 watchlist.txt
+        </div>
+      </section>
+
+      <section class="mt-3 rounded-2xl border border-lineSoft bg-surface/70 px-4 py-3 text-[10px] leading-relaxed text-dim">
+        <div class="mb-1.5 flex items-center gap-1.5 text-muted font-600 tracking-[0.14em]">
+          <svg class="h-3 w-3 text-accent" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><use href="#i-database"/></svg>
+          DATA
+        </div>
+        主源 腾讯财经 · 备源 TickFlow<br>
+        引擎 v<span id="eng-ver">—</span> · 纯价格行为，禁用一切技术指标
+      </section>
+    </aside>
+
+    <!-- ── 主区 ── -->
+    <section id="stage" class="min-w-0">
+
+      <div id="empty" class="rounded-2xl border border-dashed border-line bg-surface/40 px-6 py-24 text-center">
+        <svg class="mx-auto h-10 w-10 text-line" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"><use href="#i-candle"/></svg>
+        <p class="mt-4 text-sm text-muted">从左侧自选股选一只，或在上方搜索框输入代码 / 名称</p>
+        <p class="mt-1.5 font-mono text-xs text-dim">按 / 聚焦搜索 · ↑↓ 选择 · Enter 分析</p>
+      </div>
+
+      <div id="loading" class="hidden space-y-4">
+        <div class="skeleton h-[104px] rounded-2xl"></div>
+        <div class="skeleton h-[420px] rounded-2xl"></div>
+        <div class="grid gap-4 md:grid-cols-2"> <div class="skeleton h-56 rounded-2xl"></div><div class="skeleton h-56 rounded-2xl"></div> </div>
+      </div>
+
+      <div id="report" class="hidden space-y-4"></div>
+    </section>
+  </div>
+
+  <footer class="mt-10 border-t border-lineSoft pt-5 text-[10px] leading-relaxed text-dim">
+    裸K战法终端 · 引擎 v<span id="eng-ver2">—</span> · 仅使用 OHLC 与时间序列位置，不使用 MACD / KDJ / RSI / 均线 / 资金流。
+    本页所有结论为规则引擎的机械输出，非投资建议。
+  </footer>
+</main>
+
+<script src="/static/vendor/lightweight-charts.js"></script>
+<script src="/static/app.js"></script>
+</body>
+</html>

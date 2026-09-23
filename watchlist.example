@@ -1,0 +1,21 @@
+# 自选股列表（模板 / example）
+# 每行一只股票，格式：股票代码 股票名称（名称可省略，服务端会联网解析）
+# 跳过 # 开头的注释行与空行。
+#
+# 用法：换台电脑 clone 本仓库后，服务端首次启动会自动把本文件播种成真实列表：
+#   ~/.nakedk/watchlist.txt        ← 真实数据（数据根，可用 NAKEDK_HOME 覆盖）
+# 也可以手动：
+#   cp watchlist.example ~/.nakedk/watchlist.txt
+# 或指定任意位置：
+#   NAKEDK_WATCHLIST=/path/to/my.txt ./run.sh bg
+#
+# 交易所格式：上交所 XXXXXX.SH / 深交所 XXXXXX.SZ / 科创板 688XXX.SH
+
+600030 中信证券
+002709 天赐材料
+603501
+002415 海康威视
+600703 三安光电
+603938 三孚股份
+002493 荣盛石化
+300768 迪普科技
